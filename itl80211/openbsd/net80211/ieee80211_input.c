@@ -1061,6 +1061,9 @@ ieee80211_ba_move_window(struct ieee80211com *ic, struct ieee80211_node *ni,
     ieee80211_input_ba_flush(ic, ni, ba, ml);
 }
 
+void (*ieee80211_eapol_input)(void *, mbuf_t);
+void *ieee80211_eapol_input_arg;
+
 void
 ieee80211_enqueue_data(struct ieee80211com *ic, mbuf_t m,
                        struct ieee80211_node *ni, int mcast, struct mbuf_list *ml)
@@ -1138,6 +1141,22 @@ ieee80211_enqueue_data(struct ieee80211com *ic, mbuf_t m,
                 mbuf_dup(m, MBUF_DONTWAIT, &m2);
                 if (m2 != NULL)
                     ifp->iface->inputPacket(m2, mbuf_len(m2));
+            }
+#else
+            /*
+             * There is no in-kernel 802.1X supplicant, so EAP-Packet/Start/
+             * Logoff frames are handed to userspace (ieee80211_eapol_input) and
+             * passed up the stack, instead of being dropped by
+             * ieee80211_eapol_key_input(). Key frames stay in-kernel for
+             * the 4-way handshake.
+             */
+            if (ieee80211_is_8021x_akm((enum ieee80211_akm)ni->ni_rsnakms) &&
+                mbuf_len(m) >= sizeof(*eh) + 2 &&
+                ((const uint8_t *)(eh + 1))[1] != EAPOL_KEY) {
+                if (ieee80211_eapol_input != NULL)
+                    ieee80211_eapol_input(ieee80211_eapol_input_arg, m);
+                ml_enqueue(ml, m);
+                return;
             }
 #endif
             ieee80211_eapol_key_input(ic, m, ni);
